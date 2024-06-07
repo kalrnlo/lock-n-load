@@ -23,6 +23,33 @@ local function tryUpdate<T>(store: DataStore, keyName: string, transformFunction
 	return store:UpdateAsync(keyName, transformFunction)
 end
 
+type JSONAcceptable = { JSONAcceptable } | { [string]: JSONAcceptable } | number | string | boolean | buffer
+
+type TransformCreator<Template = JSONAcceptable, Metadata = JSONAcceptable?> = <Params...>(
+	self: StandardStore<Template, Metadata>, transformfn: (data: KeyInfo<Template, Metadata>, Params...) -> (Template, Metadata)
+) -> ((key_to_modify: Template, Params...) -> ())
+
+type KeyInfo<Template = JSONAcceptable, Metadata = JSONAcceptable?> = {
+    metadata: Metadata,
+    data: Template,
+}
+
+type StandardStore<Template = JSONAcceptable, Metadata = JSONAcceptable?> = typeof(setmetatable({} :: {
+    keys: { [string]: key.Identity<Template> },
+    update_queue: threadQueue.Identity,
+    link: datastoreLinker.Identity,
+    template: Template,
+}, {} :: {
+	create_async_global_transformer: TransformCreator<Template, Metadata>,
+    create_global_transformer: TransformCreator<Template, Metadata>,
+	create_async_transformer: TransformCreator<Template, Metadata>,
+    create_transformer: TransformCreator<Template, Metadata>,
+	lock_n_load: (self: StandardStore<Template, Metadata>) -> (),
+	unlock: (self: StandardStore<Template, Metadata>) -> (),
+	remove: (self: StandardStore<Template, Metadata>) -> (),
+	view: (self: StandardStore<Template, Metadata>) -> (),
+}))
+
 local store = {}
 export type Identity<T> = typeof(setmetatable(
 	{} :: {
@@ -38,6 +65,12 @@ export type Identity<T> = typeof(setmetatable(
 ))
 
 local stores: { Identity<any> } = {}
+
+local NOOP = function() end
+
+local baseOrderedStore = {
+
+}
 
 local function constructor<T>(name: string, template: T): Identity<T>
 	local self = setmetatable({}, { __index = store })
@@ -87,8 +120,8 @@ function store._updateAsync<T>(self: Identity<T>, keyName: string, transformFunc
 end
 
 function store.lockAndLoad<T>(self: Identity<T>, keyName: string, userID: number?, metadata: { [string]: any }?): key.Identity<T>?
-	local userIDArray = { userID :: number }
-	local potentialKeyData: T? = {} :: any
+	local potentialKeyData: T? = self._emptyTemplate
+    local userIDArray = { userID :: number }
 
 	local successfullyLocked = false
 	self:_updateAsync(keyName, function(data, info)
@@ -112,7 +145,7 @@ function store.lockAndLoad<T>(self: Identity<T>, keyName: string, userID: number
 				locked = true,
 			}
 
-			potentialKeyData = newKeyData.data
+			potentialKeyData = self:_extractRawKeyData(newKeyData.data)
 			successfullyLocked = true
 		end
 
@@ -124,7 +157,7 @@ function store.lockAndLoad<T>(self: Identity<T>, keyName: string, userID: number
 	end
 
 	local newKey = key.new(keyName, self._template)
-	newKey._data = potentialKeyData :: T
+	newKey._data = if potentialKeyData :: T
 
 	self._keys[keyName] = newKey
 
@@ -149,6 +182,7 @@ function store.unlock<T>(self: Identity<T>, keyToUnlock: key.Identity<T>)
 			lockerJobID = "",
 			locked = false,
 		}
+
 
 		newKeyData.data = keyToUnlock._data
 

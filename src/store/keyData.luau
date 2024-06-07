@@ -10,7 +10,7 @@ local function deepCopy<T>(tableToClone: T): T
 	return clone :: any
 end
 
-local function reconcile<T>(original: {}, with: {} & T): T
+local function reconcile<T >(original: { [unknown]: unknown }, with: {} & T): T
 	local tbl = table.clone(original)
 	local withAsTable = with :: {}
 
@@ -35,12 +35,6 @@ end
 
 export type Identity<T> = {
 	globalTransforms: {},
-	session: {
-		locked: boolean,
-		lockedBy: string,
-		lockTimestamp: number,
-	},
-
 	data: T,
 }
 
@@ -49,31 +43,19 @@ local keyData = {}
 function keyData.fresh<T>(template: T): Identity<T>
 	return {
 		globalTransforms = {},
-		session = {
-			locked = false,
-			lockedBy = "",
-			lockTimestamp = 0,
-		},
-
 		data = deepCopy(template),
 	}
 end
 
 function keyData.reconcile<T>(input: any, template: T): Identity<T>
-	if not input then
+	if type(template) == "number" then
+		return input or template
+	elseif not input then
 		return keyData.fresh(template)
 	end
 
 	if not input.globalTransforms then
 		input.globalTransforms = {}
-	end
-
-	if not input.session then
-		input.session = {
-			locked = false,
-			lockedBy = "",
-			lockTimestamp = 0,
-		}
 	end
 
 	if not input.data then

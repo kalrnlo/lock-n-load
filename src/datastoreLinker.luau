@@ -3,37 +3,33 @@
 ]]
 local DataStoreService = game:GetService("DataStoreService")
 
-local options = Instance.new("DataStoreOptions")
-options:SetExperimentalFeatures({
-	v2 = true,
-})
+type link = ((name: string, scope: string?, ordered: boolean?) -> Identity) & ((name: string, scope: string?, ordered: true) -> OrderedIdentity)
 
-type OrderedIdentity = {
+export type OrderedIdentity = {
 	datastore: OrderedDataStore,
-	type: "Ordered",
 }
 
-type RegularIdentity = {
+export type Identity = {
 	datastore: GlobalDataStore,
-	type: "Regular",
 }
 
-type link = ((name: string, ordered: boolean?) -> RegularIdentity) & ((name: string, ordered: true) -> OrderedIdentity)
+local experimental_features = {
+	v2 = true,
+}
 
-local link: link = function(name: string, ordered: boolean?)
+local link = (function(name, scope, ordered)
 	if ordered then
 		return table.freeze {
-			datastore = DataStoreService:GetOrderedDataStore(name, nil),
-			type = "Ordered",
+			datastore = DataStoreService:GetOrderedDataStore(name, scope :: any),
 		} :: any
 	else
+		local options = Instance.new("DataStoreOptions")
+		options:SetExperimentalFeatures(experimental_features)
+
 		return table.freeze {
-			datastore = DataStoreService:GetDataStore(name, nil, options),
-			type = "Regular",
+			datastore = DataStoreService:GetDataStore(name, scope, options),
 		} :: any
 	end
-end
-
-export type Identity = typeof(link(""))
+end) :: link
 
 return link

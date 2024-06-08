@@ -7,48 +7,68 @@ local threadQueue = require("./threadQueue")
 
 type UpdateTransformFunction<T> = (keyData.Identity<T>, DataStoreKeyInfo) -> (keyData.Identity<T>, { number }?, {}?)
 
-type Metadata = {
-	m: {[string]: any},
+type RawMetadata = {
+	data: {[string]: any},
 	session: Session,
 }
 
 type Session = {
-	lockerPlaceID: number,
-	lockTimestamp: number, 
-	lockerJobID: string,
+	timestamp: number, 
 	locked: boolean,
+	placeid: number,
+	jobid: string,
 }
 
-local function tryUpdate<T>(store: DataStore, keyName: string, transformFunction: UpdateTransformFunction<T>)
-	return store:UpdateAsync(keyName, transformFunction)
-end
-
 type JSONAcceptable = { JSONAcceptable } | { [string]: JSONAcceptable } | number | string | boolean | buffer
-
-type TransformCreator<Template = JSONAcceptable, Metadata = JSONAcceptable?> = <Params...>(
-	self: StandardStore<Template, Metadata>, transformfn: (data: KeyInfo<Template, Metadata>, Params...) -> (Template, Metadata)
-) -> ((key_to_modify: Template, Params...) -> ())
 
 type KeyInfo<Template = JSONAcceptable, Metadata = JSONAcceptable?> = {
     metadata: Metadata,
     data: Template,
 }
 
-type StandardStore<Template = JSONAcceptable, Metadata = JSONAcceptable?> = typeof(setmetatable({} :: {
-    keys: { [string]: key.Identity<Template> },
+type OrderedKeyInfo<Template = JSONAcceptable, Metadata = JSONAcceptable?> = {
+	sort_key: number,
+} & KeyInfo<Template, Metadata>
+
+export type Transformer<Template, Params...> = (key_to_modify: Template, Params...) -> ()
+
+type OrderedTransformCreator<Template = JSONAcceptable, Metadata = JSONAcceptable?, Scope = string?> = <Params...>(
+	self: OrderedStore<Template, Metadata, Scope>, transformfn: (data: OrderedKeyInfo<Template, Metadata> , Params...) -> (Template, Metadata)
+) -> Transformer<Template, Params...>
+
+type TransformCreator<Template = JSONAcceptable, Metadata = JSONAcceptable?, Scope = string?> = <Params...>(
+	self: BaseStore<Template, Metadata, Scope>, transformfn: (data: KeyInfo<Template, Metadata>, Params...) -> (Template, Metadata)
+) -> Transformer<Template, Params...>
+
+type BaseStore<Template = JSONAcceptable, Metadata = JSONAcceptable?, Scope = string?> = {
+	lock_n_load: (self: BaseStore<Template, Metadata, Scope>, key_name: string, userid: number?) -> (),
+	view_async: (self: BaseStore<Template, Metadata, Scope>, key_name: string) -> (),
+	unlock: (self: BaseStore<Template, Metadata, Scope>, key: unknown) -> (),
+	remove: (self: BaseStore<Template, Metadata, Scope>, key: unknown) -> (),
+
     update_queue: threadQueue.Identity,
-    link: datastoreLinker.Identity,
     template: Template,
-}, {} :: {
-	create_async_global_transformer: TransformCreator<Template, Metadata>,
-    create_global_transformer: TransformCreator<Template, Metadata>,
-	create_async_transformer: TransformCreator<Template, Metadata>,
-    create_transformer: TransformCreator<Template, Metadata>,
-	lock_n_load: (self: StandardStore<Template, Metadata>) -> (),
-	unlock: (self: StandardStore<Template, Metadata>) -> (),
-	remove: (self: StandardStore<Template, Metadata>) -> (),
-	view: (self: StandardStore<Template, Metadata>) -> (),
-}))
+	scope: Scope,
+}
+
+export type Store<Template = JSONAcceptable, Metadata = JSONAcceptable?, Scope = string?> = {
+	create_global_transformer: TransformCreator<Template, Metadata, Scope>,
+	create_async_transformer: TransformCreator<Template, Metadata, Scope>,
+    create_transformer: TransformCreator<Template, Metadata, Scope>,
+
+	keys: { [string]: key.Identity<Template> },
+	link: datastoreLinker.Identity,
+} & BaseStore<Template, Metadata, Scope>
+
+export type OrderedStore<Template = JSONAcceptable, Metadata = JSONAcceptable?, Scope = string?> = {
+	create_global_transformer: OrderedTransformCreator<Template, Metadata, Scope>,
+	create_async_transformer: OrderedTransformCreator<Template, Metadata, Scope>,
+    create_transformer: OrderedTransformCreator<Template, Metadata, Scope>,
+
+	keys: { [string]: key.Identity<Template> },
+	link: datastoreLinker.Identity,
+} & BaseStore<Template, Metadata, Scope>
+
 
 local store = {}
 export type Identity<T> = typeof(setmetatable(
@@ -72,6 +92,12 @@ local baseOrderedStore = {
 
 }
 
+local function raw_update_async<T>(store: GlobalDataStore, keyName: string, transformFunction: UpdateTransformFunction<T>)
+	return store:UpdateAsync(keyName, transformFunction)
+end
+
+
+
 local function constructor<T>(name: string, template: T): Identity<T>
 	local self = setmetatable({}, { __index = store })
 
@@ -89,7 +115,7 @@ function store._update<T>(self: Identity<T>, keyName: string, transformFunction:
 			return false
 		end
 
-		local success, err = pcall(tryUpdate, self._link.datastore, keyName, transformFunction)
+		local success, err = pcall(raw_update_async, self._link.datastore, keyName, transformFunction)
 		if not success then
 			warn(err)
 		end
@@ -106,7 +132,7 @@ function store._updateAsync<T>(self: Identity<T>, keyName: string, transformFunc
 			return false
 		end
 
-		local success, err = pcall(tryUpdate, self._link.datastore, keyName, transformFunction)
+		local success, err = pcall(raw_update_async, self._link.datastore, keyName, transformFunction)
 		if not success then
 			warn(err)
 		end
@@ -157,7 +183,7 @@ function store.lockAndLoad<T>(self: Identity<T>, keyName: string, userID: number
 	end
 
 	local newKey = key.new(keyName, self._template)
-	newKey._data = if potentialKeyData :: T
+	newKey._data = potentialKeyData :: T
 
 	self._keys[keyName] = newKey
 
